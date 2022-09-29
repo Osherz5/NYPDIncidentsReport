@@ -1,0 +1,194 @@
+---
+title: "NYPD Shooting Incidents"
+author: "Osher Jacob"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(lubridate)
+```
+
+
+# NYPD Shooting Incidents
+
+## Data description
+
+List of every shooting incident that occurred in NYC going back to 2006 through the end of the previous calendar year.
+
+This is a breakdown of every shooting incident that occurred in NYC going back to 2006 through the end of the previous calendar year. This data is manually extracted every quarter and reviewed by the Office of Management Analysis and Planning before being posted on the NYPD website. Each record represents a shooting incident in NYC and includes information about the event, the location and time of occurrence. In addition, information related to suspect and victim demographics is also included.
+
+
+
+## Preparing our data
+
+```{r import_data}
+url <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+
+incidents_raw <- read.csv(url)
+```
+
+```{r cleaning_data}
+
+# Removing unnecessary fields, and converting times & dates
+incidents <- incidents_raw %>%
+  select(
+    -c(Latitude, Longitude, X_COORD_CD, Y_COORD_CD,
+       Lon_Lat,JURISDICTION_CODE, STATISTICAL_MURDER_FLAG)) %>%
+  mutate(OCCUR_DATE = mdy(OCCUR_DATE), OCCUR_TIME = hms(OCCUR_TIME))
+
+# Add time hour column
+incidents$hour <- hour(incidents$OCCUR_TIME)
+
+# Handle missing data
+
+incidents$PERP_SEX[incidents$PERP_SEX == ""] <- "U"
+incidents$PERP_RACE[incidents$PERP_RACE == ""] <- "UNKNOWN"
+incidents$PERP_AGE_GROUP[incidents$PERP_AGE_GROUP == ""] <- "UNKNOWN"
+incidents$PERP_AGE_GROUP[incidents$PERP_AGE_GROUP %in% c(940,224,1020)] <- "UNKNOWN"
+incidents$LOCATION_DESC[incidents$LOCATION_DESC == ""] <- "UNKNOWN"
+
+
+# Converting categorical variables to factors
+incidents$LOCATION_DESC <- as.factor(incidents$LOCATION_DESC)
+incidents$BORO <- as.factor(incidents$BORO)
+incidents$PERP_RACE <- as.factor(incidents$PERP_RACE)
+incidents$PERP_SEX <- as.factor(incidents$PERP_SEX)
+incidents$PERP_AGE_GROUP <- as.factor(incidents$PERP_AGE_GROUP)
+incidents$PRECINCT <- as.factor(incidents$PRECINCT)
+incidents$VIC_RACE <- as.factor(incidents$VIC_RACE)
+incidents$VIC_SEX <- as.factor(incidents$VIC_SEX)
+incidents$VIC_AGE_GROUP <- as.factor(incidents$VIC_AGE_GROUP)
+
+```
+
+```{r describe_data, eval=FALSE}
+summary(incidents)
+
+```
+
+## Visualization and analysis
+
+```{r visualizations}
+
+# MAke some plots
+
+as.data.frame(table(incidents$BORO)) %>%
+  ggplot(aes(x=Var1, y=Freq)) + 
+  geom_bar(stat = "identity") +
+  theme(legend.position = "bottom") +
+  labs(title = "Incidents count by borro", y=NULL, x='Borro')
+
+
+as.data.frame(table(incidents$PERP_SEX)) %>% 
+  ggplot(aes(x=Var1, y=Freq)) + 
+  geom_bar(stat = "identity") + 
+  theme(legend.position = "bottom") +
+  labs(title = "Incidents count by perp's sex", y=NULL, x='Perp Sex')
+
+```
+
+By looking at the perpetrator sex bar chart above, it seems that there's an enormous difference between males and females as the reported perpetrator sex.
+This leads to the question: Are females less involved in shooting incidents at all (in NYC)? Or are they less likely to be the perpetrator of such an incident?
+
+To examine further we can make a similar chart of the victim's sex, and see if we get the same ratio of males to females as before.
+
+The perpetrator male to female ratio is:
+
+```{r perp_ratio}
+length(incidents$PERP_SEX[incidents$PERP_SEX == "M"]) /
+length(incidents$PERP_SEX[incidents$PERP_SEX == "F"])
+```
+Which means for every reported female shooter we have around 39 male shooters.
+
+
+The male perpetrator to victim ratio:
+```{r male_ratio}
+length(incidents$PERP_SEX[incidents$PERP_SEX == "M"]) /
+length(incidents$PERP_SEX[incidents$VIC_SEX == "M"])
+```
+
+```{r analysis_and_vis}
+
+# MAke another plot
+
+as.data.frame(table(incidents$VIC_SEX)) %>% 
+  ggplot(aes(x=Var1, y=Freq)) + 
+  geom_bar(stat = "identity") + 
+  theme(legend.position = "bottom") +
+  labs(title = "Incidents count by vic's sex", y=NULL, x='Vic Sex')
+
+```
+
+The victim male to female ratio is:
+
+```{r vic_ratio}
+length(incidents$VIC_SEX[incidents$VIC_SEX == "M"]) /
+length(incidents$VIC_SEX[incidents$VIC_SEX == "F"])
+```
+
+Which means for every reported female victim, we have around 10 male victims which is lower than our perpetrator ratio.
+
+The female perpetrator to victim ratio:
+```{r female_ratio}
+length(incidents$PERP_SEX[incidents$PERP_SEX == "F"]) /
+length(incidents$PERP_SEX[incidents$VIC_SEX == "F"])
+```
+
+Let us examine a different topic, which is the occurrence time of the incidents.
+```{r time_viz}
+# Plot common hours of incidents
+incidents_per_hour = incidents %>% count(hour)
+incidents_per_hour %>% ggplot(aes(x=hour, y=n)) + geom_point() + geom_line()
+
+```
+In this chart we can clearly see that most incidents occur at night.
+We can try and fit a model through this data,
+in order to determine the incident count at the different hours of the day.
+
+```{r time_model}
+model <- lm( incidents_per_hour$n ~ poly(incidents_per_hour$hour,3) )
+
+incidents_per_hour_w_pred = incidents %>% count(hour)
+incidents_per_hour_w_pred$pred <- predict(model, x=incidents_per_hour_w_pred$hour)
+
+incidents_per_hour_w_pred %>% ggplot(aes(x=hour, y=n)) +
+  geom_point() +
+  geom_line() +
+  geom_line(aes(x=hour, y=pred), color="red")
+```
+
+The prediction of the model (red line), seems to fit the curve quite well.
+
+## Conclusions
+Regarding our incident time analysis,
+it appear that the safest hours are between 6-11 am,
+and the most violent are between 10pm to 2am.
+
+Regarding sex of the people involved in shooting incidents.
+In general, females are less likely to be involved in our reported shooting incidents,
+and when they are, they're usually on the victim side rather than the perpetrator.
+
+Some thing to notice about this data and be cautious about,
+is that we have a big number of unknown sex in our perpetrators.
+This raises further questions about the validity of these numbers.
+
+
+## Possible sources of bias
+These examinations and results lean heavily on how the data was collected and reported.
+As mentioned before, the sex of the perpetrator is mostly unknown,
+this could create a huge bias in the data set.
+The data is only incidents that occurred in NYC,
+making general conclusions about other places from this data is also subject to heavy bias.
+
+Another disclaimer about creator of this project.
+I am a male, and my experience of NYC as a tourist was entertaining and non-violent.
+This means I could've misinterpreted the results one way or another due to personal bias.
+
+```{r sessinfo}
+sessionInfo()
+```
